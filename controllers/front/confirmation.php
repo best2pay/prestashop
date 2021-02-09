@@ -25,21 +25,11 @@ class Best2PayConfirmationModuleFrontController extends ModuleFrontController {
 			$order->save();
 			$cart = $this->context->cart;
 			$customer = new Customer($cart->id_customer);
-			//Tools::redirect('index.php?controller=order-confirmation&id_cart=' . $cart->id . '&id_module=' . $this->module->id . '&id_order=' . $this->module->currentOrder . '&key=' . $customer->secure_key);
-			Tools::redirect('https://rokastudio.ru/content/21-oplata-proshla-uspeshno' );
+			Tools::redirect('index.php?controller=order-confirmation&id_cart=' . $cart->id . '&id_module=' . $this->module->id . '&id_order=' . $this->module->currentOrder . '&key=' . $customer->secure_key);
 		} else {
-			//$order->setCurrentState(Configuration::get('PS_OS_ERROR'));
-			//$order->save();
-			//Tools::redirect('index.php?controller=order-detail&id_order=' . $order_id);
-			if ( ($res == 'error_133') || ($res == 'error_159') ) {
-			    Tools::redirect('https://rokastudio.ru/content/22-dannyj-zakaz-oplachen-ranee' );
-			} elseif ($res == 'error_169') {
-			    Tools::redirect('https://rokastudio.ru/content/23-srok-oplaty-zakza-istek' );			    
-			} else {
-			    $order->setCurrentState(Configuration::get('PS_OS_ERROR'));
-			    $order->save();
-			    Tools::redirect('https://rokastudio.ru/content/20-oshibka-oplaty' );	
-			}
+			$order->setCurrentState(Configuration::get('PS_OS_ERROR'));
+			$order->save();
+			Tools::redirect('index.php?controller=order-detail&id_order=' . $order_id);
 		}
 	}
 
