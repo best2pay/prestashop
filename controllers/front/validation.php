@@ -63,27 +63,27 @@ class Best2PayValidationModuleFrontController extends ModuleFrontController {
 		$fiscalAmount = 0;
 		foreach ($this->context->cart->getProducts() as $product) {
 			$fiscalPositions .= $product['cart_quantity'] . ';';
-        	$fiscalPositions .= $product['price']*100 . ';';        
-       		$fiscalPositions .= $TAX . ';';        
-	    	$fiscalPositions .= $product['name'] . '|';   
-        	$fiscalAmount = $fiscalAmount + (intval($product['cart_quantity'])*intval($product['price']*100)); 
+			$fiscalPositions .= $product['price']*100 . ';';
+			$fiscalPositions .= $TAX . ';';
+			$fiscalPositions .= $product['name'] . '|';
+			$fiscalAmount = $fiscalAmount + (intval($product['cart_quantity'])*intval($product['price']*100));
 		}
 		if ($order->total_shipping > 0) {
-    	    $fiscalPositions.='1;';
-    	    $fiscalPositions.=($order->total_shipping*100).';';
-    	    $fiscalPositions.=$TAX.';';
-    	    $fiscalPositions.='доставка'.'|';
-    	    $fiscalAmount = $fiscalAmount + $order->total_shipping*100;
-        }
-        $amountDiff = abs($fiscalAmount - intval($amount * 100));
-        if ($amountDiff != 0){
-            $fiscalPositions.='1'.';';
-            $fiscalPositions.=$amountDiff.';';
-            $fiscalPositions.=$TAX.';';
-            $fiscalPositions.='coupon'.';';
-            $fiscalPositions.='14'.'|';
-            $fiscalAmount = intval($amount * 100);
-        }
+			$fiscalPositions.='1;';
+			$fiscalPositions.=($order->total_shipping*100).';';
+			$fiscalPositions.=$TAX.';';
+			$fiscalPositions.='доставка'.'|';
+			$fiscalAmount = $fiscalAmount + $order->total_shipping*100;
+		}
+		$amountDiff = abs($fiscalAmount - intval($amount * 100));
+		if ($amountDiff != 0){
+			$fiscalPositions.='1'.';';
+			$fiscalPositions.=$amountDiff.';';
+			$fiscalPositions.=$TAX.';';
+			$fiscalPositions.='coupon'.';';
+			$fiscalPositions.='14'.'|';
+			$fiscalAmount = intval($amount * 100);
+		}
 	    $fiscalPositions = substr($fiscalPositions, 0, -1);
 
 		$signature = base64_encode(md5($this->module->sector_id . intval($order->total_paid * 100) . $currency . $this->module->password));
