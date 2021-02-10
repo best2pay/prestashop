@@ -75,14 +75,14 @@ class Best2PayValidationModuleFrontController extends ModuleFrontController {
 			$fiscalPositions.='доставка'.'|';
 			$fiscalAmount = $fiscalAmount + $order->total_shipping*100;
 		}
-		$amountDiff = abs($fiscalAmount - intval($amount * 100));
+		$amountDiff = abs($fiscalAmount - intval($order->total_paid * 100));
 		if ($amountDiff != 0){
 			$fiscalPositions.='1'.';';
 			$fiscalPositions.=$amountDiff.';';
 			$fiscalPositions.=$TAX.';';
 			$fiscalPositions.='coupon'.';';
 			$fiscalPositions.='14'.'|';
-			$fiscalAmount = intval($amount * 100);
+			$fiscalAmount = intval($order->total_paid * 100);
 		}
 	    $fiscalPositions = substr($fiscalPositions, 0, -1);
 
