@@ -60,24 +60,38 @@ class Best2PayValidationModuleFrontController extends ModuleFrontController {
 
 		$TAX = (isset($this->module->b2p_tax) && $this->module->b2p_tax > 0 && $this->module->b2p_tax <= 6) ? $this->module->b2p_tax : 6;
 		$fiscalPositions='';
+		$fiscalAmount = 0;
 		foreach ($this->context->cart->getProducts() as $product) {
 			$fiscalPositions .= $product['cart_quantity'] . ';';
-	        $fiscalPositions .= $product['price']*100 . ';';        
-	        $fiscalPositions .= $TAX . ';';        
-	        $fiscalPositions .= $product['name'] . '|';   
+			$fiscalPositions .= $product['price']*100 . ';';
+			$fiscalPositions .= $TAX . ';';
+			$fiscalPositions .= $product['name'] . '|';
+			$fiscalAmount = $fiscalAmount + (intval($product['cart_quantity'])*intval($product['price']*100));
 		}
-		if ($order->total_discounts > 0) {
-	        $fiscalPositions.='1;';
-	        $fiscalPositions.=($order->total_discounts * -100).';';
-	        $fiscalPositions.=$TAX.';';
-	        $fiscalPositions.='скидка'.'|';
-	    }
 		if ($order->total_shipping > 0) {
+<<<<<<< HEAD
 	        $fiscalPositions.='1;';
 	        $fiscalPositions.=($order->total_shipping*100).';';
 	        $fiscalPositions.=$TAX.';';
 	        $fiscalPositions.='Доставка'.'|';
 	    }
+=======
+			$fiscalPositions.='1;';
+			$fiscalPositions.=($order->total_shipping*100).';';
+			$fiscalPositions.=$TAX.';';
+			$fiscalPositions.='доставка'.'|';
+			$fiscalAmount = $fiscalAmount + $order->total_shipping*100;
+		}
+		$amountDiff = abs($fiscalAmount - intval($order->total_paid * 100));
+		if ($amountDiff != 0){
+			$fiscalPositions.='1'.';';
+			$fiscalPositions.=$amountDiff.';';
+			$fiscalPositions.=$TAX.';';
+			$fiscalPositions.='coupon'.';';
+			$fiscalPositions.='14'.'|';
+			$fiscalAmount = intval($order->total_paid * 100);
+		}
+>>>>>>> 8298802ce773ba89b3a1a9e871e5405ca4402403
 	    $fiscalPositions = substr($fiscalPositions, 0, -1);
 
 		$signature = base64_encode(md5($this->module->sector_id . intval($order->total_paid * 100) . $currency . $this->module->password));
