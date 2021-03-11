@@ -76,7 +76,7 @@ class Best2PayValidationModuleFrontController extends ModuleFrontController {
 	        $fiscalPositions.='1;';
 	        $fiscalPositions.=($order->total_shipping*100).';';
 	        $fiscalPositions.=$TAX.';';
-	        $fiscalPositions.='shipping'.'|';
+	        $fiscalPositions.='Доставка'.'|';
 	    }
 	    $fiscalPositions = substr($fiscalPositions, 0, -1);
 
