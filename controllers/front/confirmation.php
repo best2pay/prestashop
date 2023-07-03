@@ -10,105 +10,54 @@ class Best2PayConfirmationModuleFrontController extends ModuleFrontController {
 	 * @see FrontController::initContent()
 	 */
 	public function initContent() {
-		$order_id = intval($_REQUEST["reference"]);
-		// Need this pause to avoid receiving PENDING status
-		sleep(2);
-		
-		if (!$order_id)
-			Tools::redirect('index.php?controller=order&step=1');
-
-		$order = new Order($order_id);
-		$res = $this->checkPaymentStatus();
+		$link = Context::getContext()->link;
+		try{
+			$best2pay_id = isset($_REQUEST['id']) ? (int) $_REQUEST['id'] : null;
+			if (!$best2pay_id)
+				throw new Exception($this->module->l('Missing Best2Pay Order ID in the request'));
+			$order_id = isset($_REQUEST['reference']) ? (int) $_REQUEST['reference'] : null;
+			if (!$order_id)
+				throw new Exception($this->module->l('Missing Order ID in the request'));
+			$best2pay_operation_id = isset($_REQUEST['operation']) ? (int) $_REQUEST['operation'] : null;
+			if (!$best2pay_operation_id) {
+				$error = $this->module->l('Missing Operation ID in the request');
+				$error .= " (error " . (isset($_REQUEST['error']) ? (int) $_REQUEST['error'] : 'unknown') . ")";
+				throw new Exception($error);
+			}
+			$order = new Order($order_id);
+			if (!Validate::isLoadedObject($order))
+				throw new Exception($this->module->l('Order not found'));
 			
-		if ($res == 'valid_approval') {
-			$order->setCurrentState(Configuration::get('PS_OS_PAYMENT'));
-			$order->save();
+			$best2pay_response = $this->module->getPaymentOperationInfo($best2pay_id, $best2pay_operation_id);
+			$best2pay_operation = $this->module->parseXML($best2pay_response);
+			$operation_is_valid = $this->module->operationIsValid($best2pay_operation);
+		} catch(Exception $e) {
+			$this->module->redirectWithNotification($link->getPageLink('history'), $e->getMessage());
+		}
+		
+		if ($best2pay_operation['state'] == $this->module::BEST2PAY_OPERATION_APPROVED && in_array($best2pay_operation['type'], $this->module::BEST2PAY_PAYMENT_TYPES)) {
+			$order_state = $this->module->getCustomOrderState($best2pay_operation['type']);
 			$cart = $this->context->cart;
 			$customer = new Customer($cart->id_customer);
-			Tools::redirect('index.php?controller=order-confirmation&id_cart=' . $cart->id . '&id_module=' . $this->module->id . '&id_order=' . $this->module->currentOrder . '&key=' . $customer->secure_key);
+			$args = 'id_cart=' . $cart->id . '&id_module=' . $this->module->id . '&id_order=' . $this->module->currentOrder . '&key=' . $customer->secure_key;
+			$redirect_url = $link->getPageLink('order-confirmation') . '?' . $args;
+			$this->success[] = $this->module->l('Order successfully paid');
 		} else {
-			$order->setCurrentState(Configuration::get('PS_OS_ERROR'));
-			$order->save();
-			Tools::redirect('index.php?controller=order-detail&id_order=' . $order_id);
+			$order_state = Configuration::get('PS_OS_ERROR');
+			$redirect_url = $link->getPageLink('order-detail') . '?id_order=' . $order_id;
+			$this->warning[] = $this->module->l('An error occurred while paying for the order');
 		}
-	}
-
-	private function checkPaymentStatus() {
-		$b2p_order_id = intval($_REQUEST["id"]);
-		if (!$b2p_order_id)
-			return 'no_b2p_order_id_in_redirect';
-
-		$order_id = intval($_REQUEST["reference"]);
-		if (!$order_id)
-			return 'no_reference_in_redirect';
-
-		$b2p_operation_id = intval($_REQUEST["operation"]);
-		if (!$b2p_operation_id) {
-            $b2p_error_id = intval($_REQUEST["error"]);
-		    if (!(!$b2p_error_id)) {
-			    return 'error_' . $b2p_error_id;
-		    } else {
-			    return 'unknown_error';
-            }
+		$order->setCurrentState($order_state);
+		$order->save();
+		if($this->module->getBest2payOrder($best2pay_id)) {
+			$amount = !empty($best2pay_operation['buyIdSumAmount']) ? $best2pay_operation['buyIdSumAmount'] : $best2pay_operation['amount'];
+			$this->module->updateBest2payOrder($best2pay_id, [
+				'amount' => $amount,
+				'order_state' => $best2pay_operation['order_state']
+			]);
 		}
-
-		$signature = base64_encode(md5($this->module->sector_id . $b2p_order_id . $b2p_operation_id . $this->module->password));
-
-		if (!$this->module->test_mode) {
-			$best2pay_url = 'https://pay.best2pay.net';
-		} else {
-			$best2pay_url = 'https://test.best2pay.net';
-		}
-
-		$context  = stream_context_create(array(
-			'http' => array(
-				'header'  => "Content-type: application/x-www-form-urlencoded\r\n",
-				'method'  => 'POST',
-				'content' => http_build_query(array(
-					'sector' => $this->module->sector_id,
-					'id' => $b2p_order_id,
-					'operation' => $b2p_operation_id,
-					'signature' => $signature
-				)),
-			)
-		));
-
-		$repeat = 3;
-
-		while ($repeat) {
-			$repeat--;
-
-			$xml = file_get_contents($best2pay_url . '/webapi/Operation', false, $context);
-
-			if (!$xml) {
-			    Tools::redirect('index.php?controller=order-confirmation&id_cart=notxml' );
-				sleep(2);
-				continue;
-			}
-
-			$xml = simplexml_load_string($xml);
-			if (!$xml) {
-			    Tools::redirect('index.php?controller=order-confirmation&id_cart=notxml1' );
-				sleep(2);
-				continue;
-			}
-
-			$response = json_decode(json_encode($xml));
-			if (!$response) {
-			    Tools::redirect('index.php?controller=order-confirmation&id_cart=notresponse' );
-				sleep(2);
-				continue;
-			}
-
-//			if (!$this->module->orderWasPayed($response)) {
-//				sleep(2);
-//				continue;
-//			}
-			
-			return $this->module->orderWasPayed($response);
-		}
-
-		return false;
+		
+		$this->module->redirectWithNotification($redirect_url);
 	}
 
 }

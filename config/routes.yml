@@ -1,0 +1,15 @@
+best2pay_admin_order_complete:
+  path: best2pay/order/complete
+  methods: [GET]
+  defaults:
+    _controller: Best2Pay\Controller\PaymentOrderAdminController::completeOrderAction
+    _legacy_controller: 'PaymentOrderAdminController'
+    _legacy_link: 'PaymentOrderAdminController'
+
+best2pay_admin_order_refund:
+  path: best2pay/order/refund
+  methods: [GET]
+  defaults:
+    _controller: Best2Pay\Controller\PaymentOrderAdminController::refundOrderAction
+    _legacy_controller: 'PaymentOrderAdminController'
+    _legacy_link: 'PaymentOrderAdminController'

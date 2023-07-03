@@ -1,40 +1,97 @@
 <?php
+
+ /*
+  * tested on ver. 1.7.8.7
+  */
+
 if (!defined('_PS_VERSION_')) exit;
 
+require_once __DIR__.'/vendor/autoload.php';
+
+use PrestaShop\PrestaShop\Adapter\SymfonyContainer;
+use PrestaShopBundle\Controller\Admin\Sell\Order\ActionsBarButton;
+
 class Best2Pay extends PaymentModule {
+	const BEST2PAY_TABLE = 'best2pay_orders';
+	const BEST2PAY_ORDER_REGISTERED = 'REGISTERED';
+	const BEST2PAY_ORDER_AUTHORIZED = 'AUTHORIZED';
+	const BEST2PAY_ORDER_COMPLETED = 'COMPLETED';
+	const BEST2PAY_ORDER_CANCELED = 'CANCELED';
+	const BEST2PAY_OPERATION_APPROVED = 'APPROVED';
+	const BEST2PAY_OPERATION_TYPES = [
+		'PURCHASE',
+		'PURCHASE_BY_QR',
+		'AUTHORIZE',
+		'REVERSE',
+		'COMPLETE'
+	];
+	const BEST2PAY_PAYMENT_TYPES = [
+		'PURCHASE',
+		'PURCHASE_BY_QR',
+		'AUTHORIZE',
+	];
+	const BEST2PAY_CONFIG_FIELDS = [
+		'BEST2PAY_SECTOR_ID',
+		'BEST2PAY_PASSWORD',
+		'BEST2PAY_MODAL_PAYFORM',
+		'BEST2PAY_TEST_MODE',
+		'BEST2PAY_TAX',
+		'BEST2PAY_PAYMENT_METHOD',
+		'BEST2PAY_ORDER_COMPLETED',
+		'BEST2PAY_ORDER_AUTHORIZED',
+		'BEST2PAY_ORDER_REFUNDED',
+	];
 	protected $_html = '';
 	protected $_postErrors = array();
 
 	public $sector_id;
 	public $password;
+	public $payment_method = '';
+	public $modal_payform = 0;
 	public $test_mode = 0;
-	public $b2p_tax = 6;
+	public $tax = 6;
+	public $best2pay_url;
+	public $fiscal_positions;
+	public $shop_cart = [];
+	public $errors = [];
+	
+	public static $hooks = [
+		'payment',
+		'paymentReturn',
+		'displayPaymentEU',
+		'DisplayAdminOrder',
+		'ActionGetAdminOrderButtons'
+	];
 
 	public function __construct() {
 		$this->name = 'best2pay';
 		$this->tab = 'payments_gateways';
-		$this->version = '1.0.0';
-		$this->author = $this->l('Dennis Prochko');
-		$this->controllers = array('payment', 'validation');
+		$this->version = '1.1.2';
+		$this->author = 'Best2Pay';
+		$this->controllers = array('confirmation', 'notify', 'payment', 'validation');
 		$this->is_eu_compatible = 1;
 
 		$this->currencies = true;
 		$this->currencies_mode = 'checkbox';
 
-		$config = Configuration::getMultiple(array('BEST2PAY_SECTOR_ID', 'BEST2PAY_PASSWORD', 'BEST2PAY_TEST_MODE', 'BEST2PAY_TAX'));
-		if (!empty($config['BEST2PAY_SECTOR_ID']))
-			$this->sector_id = $config['BEST2PAY_SECTOR_ID'];
-		if (!empty($config['BEST2PAY_PASSWORD']))
-			$this->password = $config['BEST2PAY_PASSWORD'];
-		if (!empty($config['BEST2PAY_TEST_MODE']))
-			$this->test_mode = $config['BEST2PAY_TEST_MODE'];
-		if (!empty($config['BEST2PAY_TAX']))
-			$this->b2p_tax = $config['BEST2PAY_TAX'];
-
+		$this->module_key = '953b6da0a04fa4b8ab7b9e75b221994e';
+		
+		$config = Configuration::getMultiple(self::BEST2PAY_CONFIG_FIELDS);
+		foreach(self::BEST2PAY_CONFIG_FIELDS as $field) {
+			if(!empty($config[$field]))
+				$this->{strtolower(str_replace('BEST2PAY_', '', $field))} = $config[$field];
+		}
+		
+		if (!$this->test_mode)
+			$this->best2pay_url = 'https://pay.best2pay.net';
+		else
+			$this->best2pay_url = 'https://test.best2pay.net';
+		
 		$this->bootstrap = true;
+		
 		parent::__construct();
-
-		$this->displayName = $this->l('Best2Pay');
+		
+		$this->displayName = 'Best2Pay';
 		$this->description = $this->l('Accept payments for your products via credit and debit cards.');
 		$this->confirmUninstall = $this->l('Are you sure about uninstall this module?');
 		if (!isset($this->sector_id) || !isset($this->password) || !isset($this->test_mode))
@@ -42,55 +99,71 @@ class Best2Pay extends PaymentModule {
 		if (!count(Currency::checkPaymentCurrencies($this->id)))
 			$this->warning = $this->l('No currency has been set for this module.');
 	}
-
-	public function install() {
-		if (!parent::install() || !$this->registerHook('payment') || ! $this->registerHook('displayPaymentEU') || !$this->registerHook('paymentReturn'))
-			return false;
-
-		// create new order status
-		Db::getInstance()->insert('order_state', array(
-			'invoice' => 0,
-			'send_email' => 0,
-			'module_name' => $this->name,
-			'color' => 'RoyalBlue',
-			'unremovable' => 1,
-			'hidden' => 0,
-			'logable' => 0,
-			'delivery' => 0,
-			'shipped' => 0,
-			'paid' => 0,
-			'deleted' => 0
-		));
-		$id_order_state = (int)Db::getInstance()->Insert_ID();
-		$languages = Language::getLanguages(false);
-		foreach ($languages as $language) {
-			Db::getInstance()->insert('order_state_lang', array(
-				'id_order_state' => $id_order_state,
-				'id_lang' => $language['id_lang'],
-				'name' => $this->l('Awaiting payment by card'),
-				'template' => ''
-			));
+	
+	/**
+	 * @return bool
+	 */
+	public function registerHooks()
+	{
+		foreach (self::$hooks as $hook) {
+			if (!$this->registerHook($hook))
+				return false;
 		}
-		@copy(dirname(__FILE__) . DIRECTORY_SEPARATOR . 'logo.gif',
-			_PS_ROOT_DIR_ . DIRECTORY_SEPARATOR . 'img' . DIRECTORY_SEPARATOR . 'os' . DIRECTORY_SEPARATOR . $id_order_state . '.gif');
-		Configuration::updateValue('PS_OS_BEST2PAY', $id_order_state);
-
 		return true;
 	}
 
-	public function uninstall() {
-		if (!Configuration::deleteByName('BEST2PAY_SECTOR_ID')
-				|| !Configuration::deleteByName('BEST2PAY_PASSWORD')
-				|| !Configuration::deleteByName('BEST2PAY_TEST_MODE')
-				|| !parent::uninstall())
+	public function install() {
+		if (!parent::install() || !$this->registerHooks() || !$this->install_db())
 			return false;
+		
+		$id_order_state = Db::getInstance()->getValue("SELECT `id_order_state` FROM " . _DB_PREFIX_ . "order_state WHERE `module_name` = '" . pSQL($this->name) . "'");
+		if(!$id_order_state) {
+			// create new order state
+			$order_state = new OrderState();
+			$order_state->name = [];
+			foreach (Language::getLanguages(false) as $language) {
+				if (Tools::strtolower($language['iso_code']) == 'en')
+					$order_state->name[$language['id_lang']] = 'Awaiting payment by card';
+				else
+					$order_state->name[$language['id_lang']] = $this->l('Awaiting payment by card', false, $language['locale']);
+			}
+			$order_state->unremovable = true;
+			$order_state->invoice = false;
+			$order_state->send_email = false;
+			$order_state->module_name = $this->name;
+			$order_state->color = '#4169E1'; // RoyalBlue
+			$order_state->hidden = false;
+			$order_state->logable = false;
+			$order_state->delivery = false;
+			if ($order_state->add()) {
+				$source = dirname(__FILE__) . DIRECTORY_SEPARATOR . 'logo.gif';
+				$destination = _PS_ROOT_DIR_ . DIRECTORY_SEPARATOR . 'img' . DIRECTORY_SEPARATOR . 'os' . DIRECTORY_SEPARATOR . (int) $order_state->id . '.gif';
+				copy($source, $destination);
+			}
+			Configuration::updateValue('PS_OS_BEST2PAY', (int) $order_state->id);
+		}
+		return true;
+	}
+	
+	public function install_db(){
+		return Db::getInstance()->Execute( 'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . self::BEST2PAY_TABLE . '` (
+						`id`							INT(11) NOT NULL,
+						`order_id`				INT(11) NOT NULL,
+						`payment_method`	VARCHAR(255) NOT NULL,
+						`amount`					INT(11) NOT NULL,
+						`order_state`			VARCHAR(255) NOT NULL,
+						`updated`					DATETIME NOT NULL,
+						PRIMARY KEY				(`id`)
+						) ENGINE=InnoDB		DEFAULT CHARSET=utf8 ;' );
+	}
 
-		// remove our order status
-		$id_order_state = (int)Db::getInstance()->getValue('SELECT id_order_state FROM ' . _DB_PREFIX_ . 'order_state WHERE module_name = \'' . $this->name . '\'');
-		@unlink(_PS_ROOT_DIR_.DIRECTORY_SEPARATOR . 'img' . DIRECTORY_SEPARATOR . 'os' . DIRECTORY_SEPARATOR . $id_order_state . '.gif');
-		Db::getInstance()->delete('order_state_lang', 'id_order_state = ' . $id_order_state);
-		Db::getInstance()->delete('order_state', 'module_name = \'' . $this->name . '\'');
-
+	public function uninstall() {
+		foreach(self::BEST2PAY_CONFIG_FIELDS as $field) {
+			if(!Configuration::deleteByName($field))
+				return false;
+		}
+		if(!parent::uninstall())
+			return false;
 		return true;
 	}
 
@@ -105,16 +178,51 @@ class Best2Pay extends PaymentModule {
 
 	protected function _postProcess() {
 		if (Tools::isSubmit('btnSubmit')) {
-			Configuration::updateValue('BEST2PAY_SECTOR_ID', Tools::getValue('BEST2PAY_SECTOR_ID'));
-			Configuration::updateValue('BEST2PAY_PASSWORD', Tools::getValue('BEST2PAY_PASSWORD'));
-			Configuration::updateValue('BEST2PAY_TEST_MODE', Tools::getValue('BEST2PAY_TEST_MODE'));
-			Configuration::updateValue('BEST2PAY_TAX', Tools::getValue('BEST2PAY_TAX'));
+			foreach(self::BEST2PAY_CONFIG_FIELDS as $field)
+				Configuration::updateValue($field, Tools::getValue($field));
 		}
 		$this->_html .= $this->displayConfirmation($this->l('Settings updated'));
 	}
 
 	protected function _displayBest2Pay() {
+		$this->smarty->assign('title', $this->l('This module allows you to accept payments by credit and debit cards'));
 		return $this->display(__FILE__, 'infos.tpl');
+	}
+	
+	protected function _displayRoundWarning() {
+		$round_type = \Configuration::get('PS_ROUND_TYPE') != \Order::ROUND_ITEM;
+		$round_mode = \Configuration::get('PS_PRICE_ROUND_MODE') != PS_ROUND_HALF_UP;
+		$currencies = $this->checkCurrenciesPrecision();
+		if(!$round_type && !$round_mode && !$currencies)
+			return '';
+		$message = $this->l('Your rounding settings are not fully compatible with Best2Pay requirements.<br/>In order to avoid some of the transactions to fail, please change');
+		if($round_type || $round_mode) {
+			$message .= $this->l(' the PrestaShop rounding mode in <a href="@href1@" target="blank"> Preferences > General</a> to');
+			$message = str_replace('@href1@' , $this->context->link->getAdminLink('AdminPreferences'), $message);
+		}
+		$message .= ':';
+		$this->smarty->assign( array(
+			'message' => $message,
+			'round_type' => $round_type,
+			'round_mode' => $round_mode,
+			'currencies' => $currencies
+		));
+		return $this->display(__FILE__, 'roundingWarning.tpl');
+	}
+	
+	public function checkCurrenciesPrecision($precision = 2) {
+		$currencies = Currency::getPaymentCurrencies($this->id);
+		$res = [];
+		foreach($currencies as $currency) {
+			if($currency['precision'] == $precision) continue;
+			$currency['url'] = $this->context->link->getAdminLink('CurrencyController', true, array(
+				'route' => 'admin_currencies_edit',
+				'action' => 'editAction',
+				'currencyId' => $currency['id_currency']
+			));
+			$res[] = $currency;
+		}
+		return $res;
 	}
 
 	public function getContent() {
@@ -130,6 +238,7 @@ class Best2Pay extends PaymentModule {
 			$this->_html .= '<br />';
 
 		$this->_html .= $this->_displayBest2Pay();
+		$this->_html .= $this->_displayRoundWarning();
 		$this->_html .= $this->renderForm();
 
 		return $this->_html;
@@ -156,12 +265,24 @@ class Best2Pay extends PaymentModule {
 		if (!$this->checkCurrency($params['cart']))
 			return;
 
+		$module_path = Media::getMediaPath(_PS_MODULE_DIR_.$this->name);
+		$action_path = $this->context->link->getModuleLink($this->name, 'validation', array(), true);
 		$payment_options = array(
 			'cta_text' => $this->l('Pay by credit or debit card'),
-			'logo' => Media::getMediaPath(_PS_MODULE_DIR_.$this->name.'/best2pay.png'),
-			'action' => $this->context->link->getModuleLink($this->name, 'validation', array(), true)
+			'logo' => $module_path . '/best2pay.png',
+			'action' => $action_path,
+			'additionalInformation' => ''
 		);
-
+		if($this->modal_payform){
+			$this->smarty->assign(array(
+				'best2pay_url' => $this->best2pay_url,
+				'action_path' => $action_path,
+				'option_id' => $params['altern'],
+				'order_history' => $this->context->link->getPageLink('history')
+			));
+			$payment_options['additionalInformation'] = $this->display(__FILE__, 'modal_payform.tpl');
+		}
+		
 		return $payment_options;
 	}
 
@@ -207,33 +328,90 @@ class Best2Pay extends PaymentModule {
 						'type' => 'text',
 						'label' => $this->l('Sector ID'),
 						'name' => 'BEST2PAY_SECTOR_ID',
-						'desc' => $this->l('Customer number as registered at Best2Pay'),
+						'desc' => $this->l('Your individual customer number'),
 						'required' => true
 					),
 					array(
 						'type' => 'text',
 						'label' => $this->l('Password'),
 						'name' => 'BEST2PAY_PASSWORD',
-						'desc' => $this->l('The password used for digital signature as obtained in Best2Pay client\'s cabinet'),
+						'desc' => $this->l('Password used to generate a digital signature'),
 						'required' => true
 					),
 					array(
-						'type' => 'radio',
-						'label' => $this->l('Work Mode'),
-						'name' => 'BEST2PAY_TEST_MODE',
+						'type' => 'select',
+						'label' => $this->l('Payment method'),
+						'name' => 'BEST2PAY_PAYMENT_METHOD',
+						'class' => 'fixed-width-xxl',
+						'required' => true,
+						'options' => array(
+							'query' => array(
+								array(
+									'id' => '',
+									'name' => $this->l('Standard acquiring (one-stage payment)')
+								),
+								array(
+									'id' => 'two_steps',
+									'name' => $this->l('Standard acquiring (two-stage payment)') . ' *'
+								),
+								array(
+									'id' => 'halva',
+									'name' => $this->l('Halva Chastyami (one-stage payment)')
+								),
+								array(
+									'id' => 'halva_two_steps',
+									'name' => $this->l('Halva Chastyami (two-stage payment)') . ' *'
+								),
+								array(
+									'id' => 'sbp',
+									'name' => $this->l('Fast Payment System')
+								)
+							),
+							'id' => 'id',
+							'name' => 'name'
+						),
+						'desc' => '* ' . $this->l('Payment occurs after confirmation by the manager in the personal account')
+					),
+					array(
+						'type' => 'switch',
+						'label' => $this->l('Open the payment form in modal window'),
+						'name' => 'BEST2PAY_MODAL_PAYFORM',
+						'is_bool' => true,
 						'values' => array(
 							array(
-								'id'    => 'active_on',
-								'label' => $this->l('Use test mode. In this mode the funds will not withdrawn from the card.'),
-								'value' => 1
+								'id' => 'on',
+								'value' => true,
+								'label' => $this->l('On')
 							),
 							array(
-								'id'    => 'active_off',
-								'label' => $this->l('Use production mode.'),
-								'value' => 0
+								'id' => 'off',
+								'value' => '0',
+								'label' => $this->l('Off')
 							)
 						),
-						'required' => true
+						'desc' => $this->l('When this option is enabled, the payment form opens in a modal window.')
+					),
+					array(
+						'type' => 'select',
+						'label' => $this->l('Test mode'),
+						'name' => 'BEST2PAY_TEST_MODE',
+						'options' => array(
+							'query' => array(
+								array(
+									'id' => 'on',
+									'value' => 1,
+									'name' => $this->l('On')
+								),
+								array(
+									'id' => 'off',
+									'value' => 0,
+									'name' => $this->l('Off')
+								)
+							),
+							'id' => 'id',
+							'name' => 'name'
+						),
+						'desc' => $this->l('Use emulation of real work. Buyer will not be charged')
 					),
 					array(
 						'type' => 'radio',
@@ -242,37 +420,118 @@ class Best2Pay extends PaymentModule {
 						'values' => array(
 							array(
 								'id'    => 'ch1',
-								'label' => $this->l('ставка НДС 20%'),
+								'label' => $this->l('VAT rate 20%'),
 								'value' => 1
 							),
 							array(
 								'id'    => 'ch2',
-								'label' => $this->l('ставка НДС 10%'),
+								'label' => $this->l('VAT rate 10%'),
 								'value' => 2
 							),
 							array(
 								'id'    => 'ch3',
-								'label' => $this->l('ставка НДС расч. 18/118'),
+								'label' => $this->l('VAT rate calc 20/120'),
 								'value' => 3
 							),
 							array(
 								'id'    => 'ch4',
-								'label' => $this->l('ставка НДС расч. 10/110'),
+								'label' => $this->l('VAT rate calc 10/110'),
 								'value' => 4
 							),
 							array(
 								'id'    => 'ch5',
-								'label' => $this->l('ставка НДС 0%'),
+								'label' => $this->l('VAT rate 0%'),
 								'value' => 5
 							),
 							array(
 								'id'    => 'ch6',
-								'label' => $this->l('НДС не облагается'),
+								'label' => $this->l('Not subject to VAT'),
 								'value' => 6
 							)
 						),
 						'required' => true
-					)
+					),
+					
+					array(
+						'type' => '',
+						'name' => 'custom_statuses_title',
+						'label' => $this->l('Custom statuses for orders'),
+					),
+					
+					array(
+						'type' => 'select',
+						'label' => $this->l('Payment completed'),
+						'name' => 'BEST2PAY_ORDER_COMPLETED',
+						'class' => 'fixed-width-xxl',
+						'options' => array(
+							'query' => array_merge(
+								array(
+									array(
+										'id_order_state' => 0,
+										'id_lang' => $this->context->language->id,
+										'name' => ''
+									)
+								),
+								OrderState::getOrderStates($this->context->language->id)
+							),
+							'id' => 'id_order_state',
+							'name' => 'name'
+						)
+					),
+					array(
+						'type' => 'select',
+						'label' => $this->l('Payment authorized'),
+						'name' => 'BEST2PAY_ORDER_AUTHORIZED',
+						'class' => 'fixed-width-xxl',
+						'options' => array(
+							'query' => array_merge(
+								array(
+									array(
+										'id_order_state' => 0,
+										'id_lang' => $this->context->language->id,
+										'name' => ''
+									)
+								),
+								OrderState::getOrderStates($this->context->language->id)
+							),
+							'id' => 'id_order_state',
+							'name' => 'name'
+						)
+					),
+					array(
+						'type' => 'select',
+						'label' => $this->l('Payment refunded'),
+						'name' => 'BEST2PAY_ORDER_REFUNDED',
+						'class' => 'fixed-width-xxl',
+						'options' => array(
+							'query' => array_merge(
+								array(
+									array(
+										'id_order_state' => 0,
+										'id_lang' => $this->context->language->id,
+										'name' => ''
+									)
+								),
+								OrderState::getOrderStates($this->context->language->id)
+							),
+							'id' => 'id_order_state',
+							'name' => 'name'
+						)
+					),
+					
+					array(
+						'type' => '',
+						'name' => 'notify_url_title',
+						'label' => '',
+					),
+					
+					array(
+						'type' => 'text',
+						'name' => 'notify_url',
+						'label' => $this->l('Notify URL'),
+						'desc' => $this->l('Report this URL to Best2Pay technical support to receive payment notifications'),
+						'readonly' => true,
+					),
 				),
 				'submit' => array(
 					'title' => $this->l('Save'),
@@ -302,48 +561,369 @@ class Best2Pay extends PaymentModule {
 	}
 
 	public function getConfigFieldsValues()	{
-		return array(
-			'BEST2PAY_SECTOR_ID' => Tools::getValue('BEST2PAY_SECTOR_ID', Configuration::get('BEST2PAY_SECTOR_ID')),
-			'BEST2PAY_PASSWORD' => Tools::getValue('BEST2PAY_PASSWORD', Configuration::get('BEST2PAY_PASSWORD')),
-			'BEST2PAY_TEST_MODE' => Tools::getValue('BEST2PAY_TEST_MODE', Configuration::get('BEST2PAY_TEST_MODE')),
-			'BEST2PAY_TAX' => Tools::getValue('BEST2PAY_TAX', Configuration::get('BEST2PAY_TAX'))
-		);
+		$res = array();
+		foreach(self::BEST2PAY_CONFIG_FIELDS as $field)
+			$res[$field] = Tools::getValue($field, Configuration::get($field)) ? : null;
+		// default values
+		if(!isset($res['BEST2PAY_MODAL_PAYFORM']))
+			$res['BEST2PAY_MODAL_PAYFORM'] = false;
+		if(!isset($res['BEST2PAY_TEST_MODE']))
+			$res['BEST2PAY_TEST_MODE'] = 1;
+		if(!isset($res['BEST2PAY_TAX']))
+			$res['BEST2PAY_TAX'] = '6';
+		$res['notify_url'] = $this->context->link->getModuleLink($this->name, 'notify', array(), true);
+		return $res;
 	}
 	
-	public function orderWasPayed($response) {
-		$order_id = intval($response->reference);
-		if ($order_id == 0) {
-			return 'no_order';
-		}
-
-		$order = new Order($order_id);
-		if (!Validate::isLoadedObject($order)) {
-			return 'order_not_matched';
-		}
-
-		if (($response->type != 'PURCHASE' && $response->type != 'EPAYMENT') ) {
-			return 'unknown_op_type';
-		}
-
-		$tmp_response = json_decode(json_encode($response), true);
-		unset($tmp_response["signature"]);
-		unset($tmp_response["protocol_message"]);
-
-		$signature = base64_encode(md5(implode('', $tmp_response) . $this->password));
+	/**
+	 * @param $url string
+	 * @param $data array
+	 * @param $method string
+	 * @return false|string
+	 */
+	public function sendRequest($url, $data, $method = 'POST')
+	{
+		$query = http_build_query($data);
 		
-		if (!($signature === $response->signature)) {
-		    return 'wrong_signature';
+		$context = stream_context_create(array(
+			'http' => array(
+				'header'  => "Content-Type: application/x-www-form-urlencoded\r\n"
+					. "Content-Length: " . strlen($query) . "\r\n",
+				'method'  => $method,
+				'content' => $query
+			)
+		));
+		
+		if (!$context)
+			throw new Exception($this->l('Creates a stream context failed'));
+		
+		$repeat = 3;
+		while ($repeat) {
+			$repeat--;
+			$response = file_get_contents($url, false, $context);
+			if($response !== false)
+				break;
+			sleep(2);
+		}
+		return $response;
+	}
+	
+	public function redirectWithNotification($url, $message = '', $type = 'errors') {
+		if($message)
+			$this->context->controller->{$type}[] = $message;
+		
+		if($this->modal_payform) {
+			echo "<script type='text/JavaScript'>
+						window.top.location.href = '{$url}';
+					</script>";
+			die();
 		} else {
-		    if ($response->state != 'APPROVED') {
-		        if (!$response->reason_code){
-		            return 'valid_unknown_reject';
-		        } else {
-		            return 'valid_reject_' . $response->reason_code;
-		        }
-		    }
-		        
-		    return 'valid_approval';
+			$this->context->controller->redirectWithNotifications($url);
 		}
 	}
+	
+	public function hookDisplayAdminOrder($params) {
+		$id_order = $params['id_order'];
+		$order = new Order((int) $id_order);
+		if ($order->module == $this->name) {
+			$order_token = Tools::getAdminToken( 'AdminOrders' . (int) Tab::getIdFromClassName( 'AdminOrders' ) . (int) $this->context->employee->id );
+			$this->context->smarty->assign( array(
+				'ps_version' => _PS_VERSION_,
+				'id_order' => $id_order,
+				'order_token' => $order_token,
+				//'checkbox_text' => '',
+				'non_refundable' => $this->l("Best2pay does not support partial refund")
+			));
+			return $this->display( __FILE__, 'views/templates/hook/display_admin_order.tpl' );
+		}
+	}
+	
+	public function hookActionGetAdminOrderButtons($params)	{
+		$best2pay_order_state = $this->getBest2payOrderState(['order_id' => (int) $params['id_order']]);
+		if($best2pay_order_state) {
+			$order = new Order($params['id_order']);
+			$bar = $params['actions_bar_buttons_collection'];
+			$router = SymfonyContainer::getInstance()->get('router');
+			
+			$complete_data = [
+				'id' => 'order_complete_button'
+			];
+			$complete_class = 'btn-action disabled';
+			if($best2pay_order_state == self::BEST2PAY_ORDER_AUTHORIZED) {
+				$complete_data['url'] = $router->generate('best2pay_admin_order_complete', ['order_id'=> (int)$order->id]);
+				$complete_class = 'btn-primary';
+			}
+			$complete_button = new ActionsBarButton($complete_class, $complete_data, $this->l('Complete'));
+			$bar->add($complete_button);
+			
+			$refund_data = [
+				'id' => 'order_refund_button'
+			];
+			$refund_class = 'btn-action disabled';
+			if($best2pay_order_state == self::BEST2PAY_ORDER_AUTHORIZED || $best2pay_order_state == self::BEST2PAY_ORDER_COMPLETED) {
+				$refund_data['url'] = $router->generate('best2pay_admin_order_refund', ['order_id' => (int)$order->id]);
+				$refund_class = 'btn-primary';
+			}
+			$refund_button = new ActionsBarButton($refund_class, $refund_data, $this->l('Refund'));
+			$bar->add($refund_button);
+		}
+	}
+	
+	function calcFiscalPositionsShopCart($order, $tax) {
+		$fiscal_positions = '';
+		$shop_cart = [];
+		$fiscal_amount = 0;
+		$sc_key = 0;
+		foreach($this->context->cart->getProducts() as $product) {
+			$fiscal_positions .= $product['cart_quantity'] . ';';
+			$element_price = intval(round($product['price_wt'] * 100));
+			$fiscal_positions .= $element_price . ';';
+			$fiscal_positions .= $tax . ';';
+			$fiscal_positions .= $product['name'] . '|';
+			$fiscal_amount += $product['cart_quantity'] * $element_price;
+			
+			$shop_cart[$sc_key]['name'] = $product['name'];
+			$shop_cart[$sc_key]['quantityGoods'] = (int) $product['cart_quantity'];
+			$shop_cart[$sc_key]['goodCost'] = round($product['price_wt'] * $shop_cart[$sc_key]['quantityGoods'], 2);
+			$sc_key++;
+		}
+		if($order->total_shipping > 0){
+			$fiscal_positions .= '1;';
+			$element_price = intval(round($order->total_shipping * 100));
+			$fiscal_positions .= $element_price . ';';
+			$fiscal_positions .= $tax . ';';
+			$fiscal_positions .= $this->l('Delivery') . '|';
+			$fiscal_amount += $element_price;
+			
+			$shop_cart[$sc_key]['quantityGoods'] = 1;
+			$shop_cart[$sc_key]['goodCost'] = round($order->total_shipping, 2);
+			$shop_cart[$sc_key]['name'] = $this->l('Delivery');
+		}
+		$order_amount = intval($order->total_paid * 100);
+		$fiscal_diff = abs($fiscal_amount - $order_amount);
+		if ($fiscal_diff) {
+			$fiscal_positions .= '1;' . $fiscal_diff . ';6;' . $this->l('Discount') . ';14|';
+			$shop_cart = [];
+		}
+		$this->fiscal_positions = substr($fiscal_positions, 0, -1);
+		$this->shop_cart = $shop_cart;
+	}
+	
+	public function registerOrder($order, $customer, $address, $currency) {
+		$order_amount = intval($order->total_paid * 100);
+		$order_data = array(
+			'sector' => $this->sector_id,
+			'reference' => $order->id,
+			'fiscal_positions' => $this->fiscal_positions,
+			'amount' => $order_amount,
+			'description' => sprintf($this->l('Order #%s'), $order->reference),
+			'email' => $customer->email,
+			'phone' => $address->phone,
+			'currency' => $currency,
+			'mode' => 1,
+			'url' => $this->context->link->getModuleLink($this->name, 'confirmation', array(), true),
+			'signature' => base64_encode(md5($this->sector_id . $order_amount . $currency . $this->password))
+		);
+		
+		$old_lvl = error_reporting(0);
+		$best2pay_id = $this->sendRequest($this->best2pay_url . '/webapi/Register', $order_data);
+		error_reporting($old_lvl);
+		
+		if (intval($best2pay_id) == 0) {
+			error_log($best2pay_id);
+			return false;
+		}
+		
+		$this->storeBest2payOrder($best2pay_id, [
+			'order_id' => $order->id,
+			'payment_method' => $this->payment_method,
+			'amount' => $order_amount,
+			'order_state' => self::BEST2PAY_ORDER_REGISTERED
+		]);
+		
+		return $best2pay_id;
+	}
+	
+	/**
+	 * @param $order_id int
+	 * @param $operation_id int
+	 * @return false|mixed
+	 */
+	function getPaymentOperationInfo($order_id, $operation_id){
+		$data = array(
+			'sector' => $this->sector_id,
+			'id' => $order_id,
+			'operation' => $operation_id,
+			'signature' => base64_encode(md5($this->sector_id . $order_id . $operation_id . $this->password))
+		);
+		return $this->sendRequest($this->best2pay_url . '/webapi/Operation', $data);
+	}
+	
+	public function prepareWhere($data) {
+		if(is_array($data)) {
+			$where = [];
+			foreach($data as $field => $value) {
+				$where[] = '`' . pSQL($field) . '` = "' . pSQL( $value ) . '"';
+			}
+			$where = implode(' AND ', $where);
+		} else {
+			$where = '`id` = ' . (int) $data;
+		}
+		return $where;
+	}
+	
+	public function getBest2payOrder($id) {
+		$where = $this->prepareWhere($id);
+		$query = 'SELECT * FROM ' . _DB_PREFIX_ . self::BEST2PAY_TABLE . ' WHERE ' . $where;
+		return Db::getInstance()->getRow($query);
+	}
+	
+	public function getBest2payOrderState($id) {
+		$where = $this->prepareWhere($id);
+		$query = 'SELECT `order_state` FROM ' . _DB_PREFIX_ . self::BEST2PAY_TABLE . ' WHERE ' . $where;
+		return Db::getInstance()->getValue($query);
+	}
+	
+	public function storeBest2payOrder($id, $raw_data) {
+		if(!$id && !$raw_data)
+			return false;
+		$data['id'] = (int) $id;
+		foreach($raw_data as $field => $value) {
+			$data[pSQL($field)] = pSQL( $value );
+		}
+		$data['updated'] = date('Y-m-d H:i:s');
+		return Db::getInstance()->insert(self::BEST2PAY_TABLE, $data);
+	}
+	
+	public function updateBest2payOrder($id, $raw_data) {
+		if(!$id && !$raw_data)
+			return false;
+		$data = [];
+		foreach($raw_data as $field => $value) {
+			$data[pSQL($field)] = pSQL( $value );
+		}
+		$data['updated'] = date('Y-m-d H:i:s');
+		$where = $this->prepareWhere($id);
+		return Db::getInstance()->update(self::BEST2PAY_TABLE, $data, $where);
+	}
+	
+	public function signData(&$data, $password = true) {
+		$sign = $this->sector_id . implode('', $data);
+		if($password)
+			$sign .= $this->password;
+		$data['sector'] = $this->sector_id;
+		$data['signature'] = base64_encode(md5($sign));
+	}
+	
+	function prepareOrderDataForSending($best2pay_order) {
+		$currency = '643';
+		return [
+			'id' => $best2pay_order['id'],
+			'amount' => $best2pay_order['amount'],
+			'currency' => $currency
+		];
+	}
+	
+	/**
+	 * @param $string string
+	 * @return array
+	 * @throws Exception
+	 */
+	public function parseXML($string) {
+		if (!$string)
+			throw new Exception($this->l("Empty response"));
+		$xml = simplexml_load_string($string);
+		if (!$xml)
+			throw new Exception($this->l("Invalid XML"));
+		$valid_xml = json_decode(json_encode($xml), true);
+		if (!$valid_xml)
+			throw new Exception($this->l("Invalid XML"));
+		return $valid_xml;
+	}
+	
+	/**
+	 * @param $xml_array
+	 * @return false|string
+	 */
+	public function xmlValuesToString($xml_array) {
+		if(!is_array($xml_array)) return '';
+		$res = '';
+		foreach($xml_array as $key => $value) {
+			if($key === '@attributes' or $key === 'signature') continue;
+			$res .= is_string($value) ? $value : $this->xmlValuesToString($value);
+		}
+		return $res;
+	}
+	
+	/**
+	 * @param $response array
+	 * @return bool|string
+	 */
+	public function operationIsValid($response) {
+		if(empty($response['signature']))
+			throw new Exception($this->l("Empty signature"));
+		$xml_string = $this->xmlValuesToString($response);
+		$signature = base64_encode(md5($xml_string . $this->password));
+		if ($signature !== $response['signature'])
+			throw new Exception($this->l("Invalid signature"));
+		if(!in_array($response['type'], self::BEST2PAY_OPERATION_TYPES))
+			throw new Exception($this->l("Unknown operation type") . " : " . $response['type']);
+		return true;
+	}
+	
+	public function completeBest2payOrder($best2pay_order) {
+		$path = ($best2pay_order['payment_method'] == 'halva' || $best2pay_order['payment_method'] == 'halva_two_steps') ? '/webapi/custom/svkb/Complete' : '/webapi/Complete';
+		return $this->actionBest2payOrder($best2pay_order, $path);
+	}
+	
+	public function refundBest2payOrder($best2pay_order) {
+		$path = ($best2pay_order['payment_method'] == 'halva' || $best2pay_order['payment_method'] == 'halva_two_steps') ? '/webapi/custom/svkb/Reverse' : '/webapi/Reverse';
+		return $this->actionBest2payOrder($best2pay_order, $path);
+	}
+	
+	public function actionBest2payOrder($best2pay_order, $path) {
+		$url = $this->best2pay_url . $path;
+		$data = $this->prepareOrderDataForSending($best2pay_order);
+		$this->signData($data);
+		try {
+			$order = new Order($best2pay_order['order_id']);
+			if (!Validate::isLoadedObject($order))
+				throw new Exception($this->l('Order not found'));
+			$response = $this->sendRequest($url, $data);
+			$best2pay_operation = $this->parseXML($response);
+			$operation_is_valid = $this->operationIsValid($best2pay_operation);
+			if($best2pay_operation['state'] !== self::BEST2PAY_OPERATION_APPROVED) {
+				throw new Exception($this->l('Operation not approved'));
+			}
+		} catch(Exception $e) {
+			$this->get('session')->getFlashBag()->add('error', $e->getMessage());
+			return false;
+		}
+		if($this->getBest2payOrder($best2pay_order['id'])) {
+			$amount = !empty($best2pay_operation['buyIdSumAmount']) ? $best2pay_operation['buyIdSumAmount'] : $best2pay_operation['amount'];
+			$this->updateBest2payOrder($best2pay_order['id'], [
+				'order_state' => $best2pay_operation['order_state'],
+				'amount' => $amount
+			]);
+		}
+		$order->setCurrentState($this->getCustomOrderState($best2pay_operation['type']));
+		$order->save();
+		return true;
+	}
+	
+	public function getCustomOrderState($operation_type) {
+		switch($operation_type){
+			case 'PURCHASE':
+			case 'PURCHASE_BY_QR':
+			case 'COMPLETE':
+				return !empty($this->order_completed) ? $this->order_completed : Configuration::get('PS_OS_PAYMENT');
+			case 'AUTHORIZE':
+				return !empty($this->order_authorized) ? $this->order_authorized : Configuration::get('PS_OS_PAYMENT');
+			case 'REVERSE':
+				return !empty($this->order_refunded) ? $this->order_refunded : Configuration::get('PS_OS_REFUND');
+		}
+		return false;
+	}
 
+	
 }

@@ -1,0 +1,5 @@
+services:
+  # Controller
+  Best2Pay\Controller\PaymentOrderAdminController:
+    public: true
+    class: Best2Pay\Controller\PaymentOrderAdminController

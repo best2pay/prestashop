@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <module>
-    <name>best2pay</name>
-    <displayName><![CDATA[Онлайн, банковская карта]]></displayName>
-    <version><![CDATA[1.0.0]]></version>
-    <description><![CDATA[Принимайте платежи за свои товары с помощью банковских карт.]]></description>
-    <author><![CDATA[Прочко Денис]]></author>
-    <tab><![CDATA[payments_gateways]]></tab>
-	<confirmUninstall><![CDATA[Вы уверены, что хотите деинсталлировать этот модуль?]]></confirmUninstall>
-    <is_configurable>1</is_configurable>
-    <need_instance>1</need_instance>
+	<name>best2pay</name>
+	<displayName><![CDATA[Best2Pay]]></displayName>
+	<version><![CDATA[1.1.2]]></version>
+	<description><![CDATA[Принимайте платежи с банковских карт.]]></description>
+	<author><![CDATA[Best2Pay]]></author>
+	<tab><![CDATA[payments_gateways]]></tab>
+	<confirmUninstall><![CDATA[Вы уверены, что хотите удалить этот модуль?]]></confirmUninstall>
+	<is_configurable>1</is_configurable>
+	<need_instance>1</need_instance>
 	<limited_countries></limited_countries>
 </module>

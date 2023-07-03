@@ -19,11 +19,29 @@
  *
  */
 *}
-<div class="alert alert-info">
-<a href="http://www.best2pay.net" target="_blank"><img src="../modules/best2pay/best2pay.png" style="float:left; margin-right:15px;"></a>
-<div style="float:left">
-	<p><strong>{$title}</strong></p>
-	<p>Website: <a href="http://www.best2pay.net" target="_blank">http://www.best2pay.net</a></p>
-</div>
-<p style="clear:both"></p>
+
+<div class="alert alert-warning" data-rounding-alert>
+  <button type="button" class="close" data-dismiss="alert">×</button>
+    <div>
+      {$message|unescape:'html'}
+    </div>
+	<ul>
+    {if $round_mode}
+		<li>
+			{l s='Round mode: "Round up away from zero, when it is half way there (recommended)"' mod='best2pay'}
+		</li>
+		{/if}
+    {if $round_type}
+		<li>
+			{l s='Round type: "Round on each item"' mod='best2pay'}
+		</li>
+    {/if}
+    {if $currencies}
+		<li>
+			{l s='Number of decimals' d='Admin.Shopparameters.Feature'}: "2" ( {foreach from=$currencies item=$currency name=currency_obj}
+        {if !$smarty.foreach.currency_obj.first}, {/if}<a href="{$currency['url']}" target="_blank">{$currency['iso_code']}</a>
+			{/foreach})
+		</li>
+    {/if}
+	</ul>
 </div>

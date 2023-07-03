@@ -1,0 +1,27 @@
+{
+  "name": "best2pay/module-best2pay",
+  "description": "Best2Pay integration with payment gateway prestashop",
+  "homepage": "https://best2pay.net/",
+  "license": [
+    "GPL-3.0-or-later"
+  ],
+  "authors": [
+    {
+      "name": "Best2Pay",
+      "email": "helpline@best2pay.net"
+    }
+  ],
+  "require": {
+    "php": ">=7.4",
+    "ext-json": "*"
+  },
+  "autoload": {
+    "psr-4": {
+      "Best2Pay\\Controller\\": "src/Controller/"
+    }
+  },
+  "config": {
+    "prepend-autoloader": false
+  },
+  "type": "prestashop-module"
+}
